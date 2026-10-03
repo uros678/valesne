@@ -1,0 +1,201 @@
+{{template "top" .}}
+  <div class="wrap">
+    <div class="box">
+      <span class="title">[ ABOUT ]</span>
+      <div><span class="val">valesne</span> <span class="dim">&mdash; Latin for "are you well?" (the answer: <i>valeo</i>, "I am well")</span></div>
+      <div><span class="key">version</span> <span class="val">{{.Version}}</span></div>
+      <div><span class="key">config</span> <code>{{.Path}}</code> <span class="dim">(loaded {{.LoadedAt}})</span></div>
+      <div class="meta">
+        A small monitor for hosts and services. It resolves hosts through DNS,
+        pings them and checks their web pages, queries DNS servers directly, checks
+        TLS certificates and (optionally) the Docker daemon and its containers. The last results
+        of every check are drawn as small graphs on the STATUS page.
+      </div>
+      <div class="meta">
+        Single binary written in Go, the web pages are built in. Runs on Windows and Linux.
+      </div>
+    </div>
+
+    <div class="box">
+      <span class="title">[ SETTINGS ]</span>
+      <div>
+        Settings are edited in the config file above (TOML format, lines starting with <code>#</code> are comments).
+        The program picks up changes by itself within a few seconds, no restart is needed (except for <code>listen_port</code>).
+        Errors in the file are shown on the STATUS page; the program keeps running with the last valid configuration.
+      </div>
+      <div class="dim meta">
+        The sections below explain the settings with the examples of the default config (written on first start); they do not show your values (what is checked is on the STATUS page).
+        Hosts, DNS servers and certificates are lists with one line per entry (mind the comma at the end of each line).
+        The block form works too (<code>[[targets]]</code> with one key per line, for each entry), but not both forms for the
+        same list. Blocks must come after the lists: a <code>key = …</code> line after a <code>[[…]]</code> header belongs to that block.
+      </div>
+      <div class="sections">
+
+    {{range .Sections}}
+    <details class="section" data-key="{{.Title}}">
+      <summary><span class="sec">{{.Title}}</span> <span class="dim">{{range $i, $s := .Settings}}{{if $i}} · {{end}}{{$s.Key}}{{end}}</span></summary>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>SETTING</th><th>EXAMPLE</th><th>MEANING</th></tr></thead>
+          <tbody>
+            {{range .Settings}}
+            <tr><td class="key">{{.Key}}</td><td class="val">{{.Example}}</td><td class="desc">{{.Desc}}</td></tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+    </details>
+    {{end}}
+
+    <details class="section" data-key="HOSTS">
+      <summary><span class="sec">HOSTS · targets</span> <span class="dim">name · url · host · ok_status</span></summary>
+      <div class="dim">
+        One line per host in the <code>targets = [ … ]</code> list (or a <code>[[targets]]</code> block per host). Each host gets a ping (the name is resolved by the system
+        resolver; when that fails, ping shows <code>DNS: ...</code>) and an HTTP check when <code>url</code> is set (by default a response of 200-399 = OK, see <code>ok_status</code>).
+      </div>
+      <table>
+        <tbody>
+          <tr><td class="key">name</td><td class="desc">name shown on the page (optional, defaults to host)</td></tr>
+          <tr><td class="key">url</td><td class="desc">application address for the HTTP check (optional; no url = no HTTP check)</td></tr>
+          <tr><td class="key">host</td><td class="desc">name or IP for the ping check (optional when url is set - taken from it)</td></tr>
+          <tr><td class="key">ok_status</td><td class="desc">HTTP status codes that count as OK (optional, default <code>200-399</code>), a list of codes and ranges, e.g. <code>200-399,401</code>. A page behind a login often answers 401 or 403: add that code when you only want to know that the web server is up.</td></tr>
+        </tbody>
+      </table>
+      <div class="dim meta">Default config:</div>
+<pre>targets = [
+  { name = "Example",    url  = "https://example.com" },   # ping + HTTP
+  { name = "Cloudflare", host = "1.1.1.1" },               # ping only
+  # { name = "Behind a login", url = "https://intranet.example.com/app/", ok_status = "200-399,401" },
+]</pre>
+    </details>
+
+    <details class="section" data-key="DNS SERVERS">
+      <summary><span class="sec">DNS SERVERS · dns_servers</span> <span class="dim">name · server · query</span></summary>
+      <div class="dim">
+        One line per DNS server in the <code>dns_servers = [ … ]</code> list (or a <code>[[dns_servers]]</code> block per server),
+        queried directly (bypassing the system resolver).
+        <span class="up">OK</span> = answered (NOERROR/NXDOMAIN) · <span class="warn">WARN</span> = answered with an error (REFUSED, SERVFAIL …) ·
+        <span class="down">FAIL</span> = no answer.
+      </div>
+      <table>
+        <tbody>
+          <tr><td class="key">name</td><td class="desc">name shown on the page (optional, defaults to server)</td></tr>
+          <tr><td class="key">server</td><td class="desc">server IP, optionally with a port (default 53), e.g. <code>10.0.0.1:53</code></td></tr>
+          <tr><td class="key">query</td><td class="desc">name to ask for (optional, defaults to dns_query)</td></tr>
+        </tbody>
+      </table>
+      <div class="dim meta">Default config:</div>
+<pre>dns_servers = [
+  { name = "Cloudflare DNS", server = "1.1.1.1" },
+  { name = "Quad9",          server = "9.9.9.9", query = "example.com" },   # own query
+  # { name = "Internal DNS", server = "10.0.0.10", query = "intranet.company.local" },
+]</pre>
+    </details>
+
+    <details class="section" data-key="CERTIFICATES">
+      <summary><span class="sec">CERTIFICATES · certs</span> <span class="dim">name · host · address</span></summary>
+      <div class="dim">
+        One line per TLS certificate in the <code>certs = [ … ]</code> list (or a <code>[[certs]]</code> block per certificate),
+        e.g. to notice in time when certbot stops renewing. The certificate
+        actually served on the address is checked, so a missing web server reload after a renewal is noticed too.
+        <span class="up">OK</span> = enough time left · <span class="warn">WARN</span> = less than 1/4 of the lifetime left, the renewal is overdue
+        (certbot renews at about 1/3); at most 30 days before expiry, so a 1-year certificate warns at 30 days, not 99 · <span class="down">FAIL</span> = fewer than 7 days left, or expired.
+        Not reachable (connection refused, no TLS on the port) or not valid (hostname, chain, self-signed) is
+        <span class="warn">WARN</span> with the error but never alerts: only the expiry does.
+      </div>
+      <table>
+        <tbody>
+          <tr><td class="key">name</td><td class="desc">name shown on the page (optional, defaults to host)</td></tr>
+          <tr><td class="key">host</td><td class="desc">name on the certificate, used for SNI and verification, e.g. <code>example.com</code> (no <code>https://</code>, no port)</td></tr>
+          <tr><td class="key">address</td><td class="desc">where to connect, <code>host:port</code> or <code>IP:port</code> (optional, defaults to host:443). Behind Cloudflare or another proxy set the origin here, e.g. <code>192.168.1.10:443</code>, otherwise you see the proxy's certificate instead of your own.</td></tr>
+        </tbody>
+      </table>
+      <div class="dim meta">Default config:</div>
+<pre>certs = [
+  { name = "Example", host = "example.com" },
+  # { name = "My site", host = "my-site.example", address = "192.168.1.10:443" },   # origin behind a proxy
+]</pre>
+    </details>
+
+    <details class="section" data-key="DOCKER">
+      <summary><span class="sec">DOCKER · [[docker]]</span> <span class="dim">name · endpoint · monitored</span></summary>
+      <div class="dim">
+        Each <code>[[docker]]</code> block is one Docker daemon on this server. valesne only sends read-only
+        requests, but the user it runs as needs access to the Docker socket (member of the <code>docker</code> group, or root).
+        Daemon: <span class="up">OK</span> = answers · <span class="down">FAIL</span> = not reachable.
+        Container: <span class="up">OK</span> = running (and healthy) · <span class="pending">WAIT</span> = health check starting ·
+        <span class="warn">WARN</span> = unhealthy or restarting · <span class="warn">STOPPED</span> = exited · <span class="down">FAIL</span> = missing or dead.
+        Every container on the daemon is shown; a STOPPED one counts as DOWN only when it is monitored
+        (in the <code>monitored</code> list), otherwise it is just shown. Monitored containers are listed first on the status page, with <code>[MONITORED]</code> next to their status.
+        The default config has this block turned off (<code>docker_check = false</code>); set it to <code>true</code> to use it.
+      </div>
+      <table>
+        <tbody>
+          <tr><td class="key">name</td><td class="desc">name shown on the page (optional, defaults to endpoint)</td></tr>
+          <tr><td class="key">endpoint</td><td class="desc"><code>unix:///var/run/docker.sock</code> or <code>tcp://host:2375</code> (optional, defaults to <code>DOCKER_HOST</code> when set, e.g. by <code>docker-compose.yml</code>, otherwise the unix socket)</td></tr>
+          <tr><td class="key">monitored</td><td class="desc">the containers that must be running: container name or compose service name, e.g. <code>["web", "db"]</code> (optional); the others are only shown. Stopped or gone (<code>docker compose down</code>) is FAIL and alerts.</td></tr>
+        </tbody>
+      </table>
+      <div class="dim meta">Default config:</div>
+<pre>[[docker]]
+name = "Docker"
+# endpoint  = "unix:///var/run/docker.sock"   # optional, see above
+# monitored = ["web", "db"]                   # these must run (alert)</pre>
+    </details>
+
+      </div>
+    </div>
+
+    <div class="box">
+      <span class="title">[ CREDITS ]</span>
+      <div class="credits">
+        <div><span class="key">idea, testing</span> <span class="val">uros678</span></div>
+        <div><span class="key">programming</span> <span class="val">Claude (Anthropic AI), in Claude Code</span></div>
+      </div>
+      <div class="dim meta">
+        Built with the Go standard library plus <code>golang.org/x/net</code>,
+        <code>golang.org/x/sys</code> and <code>github.com/BurntSushi/toml</code>.
+      </div>
+    </div>
+
+    <div class="box">
+      <span class="title">[ LICENSE ]</span>
+      <div class="val">MIT License</div>
+      <pre class="license">
+Copyright (c) 2026 uros678
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.</pre>
+    </div>
+  </div>
+  <script>
+    // Open sections are remembered in localStorage, like the groups on STATUS.
+    const helpOpen = new Set(JSON.parse(localStorage.getItem("helpOpen") || "[]"));
+    for (const d of document.querySelectorAll("details.section")) {
+      d.open = helpOpen.has(d.dataset.key);
+      d.addEventListener("toggle", () => {
+        if (d.open) helpOpen.add(d.dataset.key); else helpOpen.delete(d.dataset.key);
+        localStorage.setItem("helpOpen", JSON.stringify([...helpOpen]));
+      });
+    }
+  </script>
+  <div class="bar bottom">
+    <span>valesne · settings are edited in the config file · MIT License</span>
+    <span><b>F5</b> refresh</span>
+  </div>
+{{template "bottom"}}

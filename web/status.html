@@ -1,0 +1,505 @@
+{{template "top" .}}
+  <div class="wrap">
+    <div class="box error" id="cfgErr" hidden>
+      <span class="title">[ CONFIGURATION ERROR ]</span>
+      <div id="cfgErrText"></div>
+      <div class="dim meta"><span id="cfgErrAt"></span> · the program keeps running with the last valid configuration. Fix the file and save it, it is reloaded automatically: <code>{{.ConfigPath}}</code></div>
+    </div>
+    <div class="box">
+      <span class="title">[ STATUS ]</span>
+      <div class="summary">
+        <span class="up" id="up">[ OK 0 ]</span>
+        <span class="warn" id="warnCount">[ WARN 0 ]</span>
+        <span class="down" id="down">[ DOWN 0 ]</span>
+        <span class="pending" id="pending">[ WAIT 0 ]</span>
+        <span class="warn" id="stopped" hidden>[ STOPPED 0 ]</span>
+      </div>
+      <div class="dim meta" id="alertLine"></div>
+      <div class="warn meta" id="muteLine" hidden></div>
+      <div class="warn meta" id="portLine" hidden></div>
+      <div class="dim meta" id="meta">loading…</div>
+    </div>
+    <div class="box" id="hostsBox" hidden>
+      <span class="title">[ HOSTS ]</span>
+      <div class="scroll">
+        <table class="status hosts">
+          <thead>
+            <tr>
+              <th>HOST</th>
+              <th>PING</th>
+              <th>HTTP</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="box" id="dnsBox" hidden>
+      <span class="title">[ DNS SERVERS ]</span>
+      <div class="scroll">
+        <table class="status">
+          <thead>
+            <tr>
+              <th>SERVER</th>
+              <th>ANSWER</th>
+            </tr>
+          </thead>
+          <tbody id="dnsRows"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="box" id="certBox" hidden>
+      <span class="title">[ CERTIFICATES ]</span>
+      <div class="scroll">
+        <table class="status">
+          <thead>
+            <tr>
+              <th>CERTIFICATE</th>
+              <th>STATUS</th>
+            </tr>
+          </thead>
+          <tbody id="certRows"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="box" id="dockerBox" hidden>
+      <span class="title">[ DOCKER ]</span>
+      <div class="scroll">
+        <table class="status">
+          <thead>
+            <tr>
+              <th>DAEMON / CONTAINER</th>
+              <th>STATUS</th>
+            </tr>
+          </thead>
+          <tbody id="dockerRows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="bar bottom">
+    <span><b>F5</b> refresh · the page refreshes itself every 2 s</span>
+    <span id="updated">last refresh: --:--:--</span>
+  </div>
+  <script>
+    const rows = document.getElementById("rows");
+    const hostsBox = document.getElementById("hostsBox");
+    const dnsBox = document.getElementById("dnsBox");
+    const dnsRows = document.getElementById("dnsRows");
+    const certBox = document.getElementById("certBox");
+    const certRows = document.getElementById("certRows");
+    const dockerBox = document.getElementById("dockerBox");
+    const dockerRows = document.getElementById("dockerRows");
+    const meta = document.getElementById("meta");
+    const alertLine = document.getElementById("alertLine");
+    const muteLine = document.getElementById("muteLine");
+    const portLine = document.getElementById("portLine");
+    const up = document.getElementById("up");
+    const warnCount = document.getElementById("warnCount");
+    const down = document.getElementById("down");
+    const pending = document.getElementById("pending");
+    const stopped = document.getElementById("stopped");
+    const updated = document.getElementById("updated");
+    const cfgErr = document.getElementById("cfgErr");
+    const cfgErrText = document.getElementById("cfgErrText");
+    const cfgErrAt = document.getElementById("cfgErrAt");
+
+    function hhmmss(d) {
+      return d.toLocaleTimeString("en-GB", { hour12: false });
+    }
+
+    function badge(probe) {
+      if (probe.skipped) return '<span class="badge dim">[  --  ]</span>';
+      if (probe.stopped) return '<span class="badge ' + (probe.warn ? "warn" : "down") + '">[STOPPED]</span>';
+      if (probe.pending) return '<span class="badge pending">[ WAIT ]</span>';
+      if (probe.ok) return '<span class="badge up">[  OK  ]</span>';
+      if (probe.warn) return '<span class="badge warn">[ WARN ]</span>';
+      return '<span class="badge down">[ FAIL ]</span>';
+    }
+
+    // opts.tagHtml is shown next to the badge (e.g. [MONITORED]);
+    // opts.third (text) or opts.thirdHtml replaces the latency line;
+    // opts.graph draws the latency graph (hosts and DNS servers; the other
+    // boxes only show the current state); opts.nowrap keeps the third line on one line (the group
+    // summary, so the column gets wider instead of breaking it mid-word; an
+    // error on the second line may still wrap).
+    function probeCell(probe, opts = {}) {
+      if (probe.skipped) return badge(probe) + '<div class="muted">not configured</div>';
+      const extra = probe.ok || probe.pending
+        ? (probe.detail || "")
+        : (probe.error || "");
+      const third = "third" in opts
+        ? opts.third
+        : (probe.pending ? "" : probe.latencyMs + " ms");
+      return '<div class="probe">' +
+        (opts.tagHtml ? "<span>" + badge(probe) + " " + opts.tagHtml + "</span>" : badge(probe)) +
+        '<span class="muted">' + (extra ? escapeHtml(extra) : "&nbsp;") + '</span>' +
+        (opts.nowrap ? '<span class="muted nowrap">' : '<span class="muted">') + (opts.thirdHtml || (third ? escapeHtml(third) : "&nbsp;")) + '</span>' +
+        (opts.graph ? sparkline(probe.history || []) : "") +
+        '</div>';
+    }
+
+    // Graph of recent measurements as bars: green = latency (scaled to the max
+    // in the window), red = failed check, amber = the server answered with an
+    // error (WARN), dark dot = no measurement yet.
+    // Newest measurements are on the right; the graph is always drawn so the
+    // space is reserved.
+    // Bars touch each other (BAR = SLOT): the graph is stretched to the column
+    // width, so a gap would be rounded to 0, 1 or 2 screen pixels and look uneven.
+    const SLOT = 4, BAR = SLOT, H = 30;
+    const HISTORY = 40; // historySize in main.go
+    function sparkline(hist) {
+      const ok = hist.filter(s => s.ok).map(s => s.ms);
+      const max = Math.max(1, ...ok);
+      const offset = HISTORY - hist.length;
+      let bars = "";
+      for (let i = 0; i < offset; i++) {
+        bars += '<rect class="empty" x="' + i * SLOT + '" y="' + (H - 1) + '" width="' + BAR + '" height="1"/>';
+      }
+      hist.forEach((s, i) => {
+        const x = (offset + i) * SLOT;
+        if (!s.ok) {
+          bars += '<rect class="' + (s.warn ? "warn" : "fail") + '" x="' + x + '" y="0" width="' + BAR + '" height="' + H + '"/>';
+          return;
+        }
+        const h = Math.max(2, Math.round((s.ms / max) * H));
+        bars += '<rect class="ok" x="' + x + '" y="' + (H - h) + '" width="' + BAR + '" height="' + h + '"/>';
+      });
+      const tip = ok.length
+        ? "min " + Math.min(...ok) + " ms · avg " + Math.round(ok.reduce((a, b) => a + b, 0) / ok.length) + " ms · max " + Math.max(...ok) + " ms"
+        : (hist.length ? "all checks failed" : "no measurements yet");
+      return '<svg class="spark" viewBox="0 0 ' + HISTORY * SLOT + " " + H + '" preserveAspectRatio="none" shape-rendering="crispEdges">' +
+        "<title>" + tip + (hist.length ? " (last " + hist.length + ")" : "") + "</title>" +
+        bars + "</svg>";
+    }
+
+    async function refresh() {
+      try {
+        const res = await fetch("/api/status", { cache: "no-store" });
+        const data = await res.json();
+        const servers = data.dnsServers || [];
+        const docker = data.docker || [];
+        const certs = data.certs || [];
+        const hosts = data.results || [];
+        meta.textContent = "interval " + data.intervalSeconds + "s · stagger " + data.staggerMs + "ms" +
+          (hosts.length ? " · hosts " + hosts.length : "") +
+          (servers.length ? " · DNS servers " + servers.length : "") +
+          (certs.length ? " · certificates " + certs.length : "") +
+          (docker.length ? " · Docker daemons " + docker.length : "");
+        up.textContent = "[ OK " + data.up + " ]";
+        warnCount.textContent = "[ WARN " + (data.warn || 0) + " ]";
+        down.textContent = "[ DOWN " + data.down + " ]";
+        pending.textContent = "[ WAIT " + data.pending + " ]";
+        // Only shown when there is a Docker daemon.
+        stopped.hidden = docker.length === 0;
+        stopped.textContent = "[ STOPPED " + (data.stopped || 0) + " ]";
+        updated.textContent = "last refresh: " + hhmmss(new Date());
+        cfgErr.hidden = !data.configError;
+        cfgErrText.textContent = data.configError || "";
+        cfgErrAt.textContent = "since " + (data.configErrorAt || "");
+        renderAlertLine(data.alerts || {});
+        // Before the boxes are drawn: their rows show which checks are muted.
+        mute = { all: !!data.muteAll, names: data.muted || [], until: data.muteUntil || "" };
+        muteLine.hidden = !mute.all;
+        muteLine.textContent = "! all alerts muted until " + mute.until;
+        portLine.hidden = !data.restartPort;
+        portLine.textContent = "! listen_port changed to " + data.restartPort + ", takes effect after a restart (running on " + data.listenPort + ")";
+        hostsBox.hidden = hosts.length === 0;
+        lastHosts = hosts;
+        renderHosts();
+        dnsBox.hidden = servers.length === 0;
+        lastServers = servers;
+        renderDns();
+        certBox.hidden = certs.length === 0;
+        lastCerts = certs;
+        renderCerts();
+        dockerBox.hidden = docker.length === 0;
+        lastDocker = docker;
+        renderDocker();
+      } catch (e) {
+        meta.textContent = "ERR: " + String(e);
+      }
+    }
+
+    // alertLine shows whether ntfy and the heartbeat work (never their URLs).
+    // A failure is amber but not counted in the summary: they are not checks.
+    // ntfy is only used when something changes, so "ok" is the last send.
+    function renderAlertLine(a) {
+      const ntfy = a.ntfy || {}, hb = a.heartbeat || {};
+      if (!ntfy.on && !hb.on) {
+        alertLine.className = "dim meta";
+        alertLine.textContent = "alerts: off";
+        return;
+      }
+      const failing = c => c.on && c.error;
+      let n = "ntfy off";
+      if (failing(ntfy)) n = "ntfy failing since " + ntfy.since + ": " + ntfy.error + (ntfy.unsent ? ", " + ntfy.unsent + " unsent" : "");
+      else if (ntfy.lastOk) n = "ntfy ok, last sent " + ntfy.lastOk;
+      else if (ntfy.on) n = "ntfy ready, nothing sent yet";
+      let h = "heartbeat off";
+      if (failing(hb)) h = "heartbeat failing since " + hb.since + ": " + hb.error;
+      else if (hb.lastOk) h = "heartbeat ok " + hb.lastOk;
+      else if (hb.on) h = "heartbeat pending";
+      const bad = failing(ntfy) || failing(hb);
+      alertLine.className = (bad ? "warn" : "dim") + " meta";
+      alertLine.textContent = (bad ? "! " : "") + "alerts: " + n + " · " + h;
+    }
+
+    // Groups (every Docker daemon, and the host, DNS server and certificate
+    // lists when they have more than GROUP_OPEN entries) are collapsed by
+    // default; a click (or Enter/Space) on the group row opens it. Open
+    // groups are remembered in localStorage, so the refresh every 2 s and F5
+    // keep them open.
+    const GROUP_OPEN = 2;
+    let lastHosts = [];
+    let lastServers = [];
+    let lastCerts = [];
+    let lastDocker = [];
+    let openGroups = new Set();
+    try {
+      openGroups = new Set(JSON.parse(localStorage.getItem("openGroups") || "[]"));
+    } catch (e) {}
+    const daemonKey = d => d.name + "|" + d.endpoint;
+
+    function groupRow(key, open, cells) {
+      return "<tr class='group' tabindex='0' role='button' aria-expanded='" + open + "' data-key=\"" + escapeHtml(key) + "\">" + cells + "</tr>";
+    }
+
+    // A toggle is a group row (tr.group) or an inline toggle inside a row
+    // (.inline-toggle, e.g. the SAN list of a certificate); both carry data-key.
+    const TOGGLES = "tr.group, .inline-toggle";
+
+    // A toggle only changes its own table, so only that one is redrawn.
+    function toggleGroup(tbody, render, key) {
+      if (openGroups.has(key)) openGroups.delete(key); else openGroups.add(key);
+      try {
+        localStorage.setItem("openGroups", JSON.stringify([...openGroups]));
+      } catch (e) {}
+      render();
+      const row = [...tbody.querySelectorAll(TOGGLES)].find(r => r.dataset.key === key);
+      if (row) row.focus();
+    }
+    for (const [tbody, render] of [[rows, renderHosts], [dnsRows, renderDns], [certRows, renderCerts], [dockerRows, renderDocker]]) {
+      tbody.addEventListener("click", e => {
+        const row = e.target.closest(TOGGLES);
+        if (row) toggleGroup(tbody, render, row.dataset.key);
+      });
+      tbody.addEventListener("keydown", e => {
+        const row = e.target.closest(TOGGLES);
+        if (row && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          toggleGroup(tbody, render, row.dataset.key);
+        }
+      });
+    }
+
+    // A list with up to GROUP_OPEN entries is shown as is; a longer one is
+    // behind one group row (label) with an overall badge per column (cells:
+    // one groupCell per column), its rows (row) only when the group is open.
+    function renderGroup(tbody, items, key, label, cells, row) {
+      if (items.length <= GROUP_OPEN) {
+        tbody.innerHTML = items.map(row).join("");
+        return;
+      }
+      const open = openGroups.has(key);
+      tbody.innerHTML = groupRow(key, open,
+          "<td><div class='name toggle" + (open ? " open" : "") + "'>" + label + "</div></td>" +
+          cells.map(c => "<td>" + c + "</td>").join("")) +
+        (open ? items.map(row).join("") : "");
+    }
+
+    // One coloured line for a collapsed group, e.g. "12 containers: 10 ok · 1 stopped · 1 fail".
+    function countSummary(total, noun, n, classes) {
+      const parts = Object.keys(classes).filter(k => n[k])
+        .map(k => '<span class="' + classes[k] + '">' + n[k] + " " + k + "</span>");
+      return total + " " + noun + (total === 1 ? "" : "s") + ": " + parts.join(" · ");
+    }
+
+    // Overall badge + count line of one column of a collapsed group: FAIL
+    // when any probe failed, then WARN, then WAIT, else OK. Skipped probes
+    // (e.g. HTTP of a host without a url) are left out.
+    function groupCell(probes, noun) {
+      probes = probes.filter(p => !p.skipped);
+      if (probes.length === 0) return badge({ skipped: true }) + '<div class="muted">not configured</div>';
+      const n = { ok: 0, wait: 0, warn: 0, fail: 0 };
+      for (const p of probes) {
+        if (p.pending) n.wait++;
+        else if (p.ok) n.ok++;
+        else if (p.warn) n.warn++;
+        else n.fail++;
+      }
+      return "<div class='probe'>" +
+        badge({
+          ok: n.fail + n.warn + n.wait === 0,
+          warn: n.fail === 0 && n.warn > 0,
+          pending: n.fail + n.warn === 0 && n.wait > 0,
+        }) +
+        '<span class="muted nowrap">' + countSummary(probes.length, noun, n, { ok: "up", wait: "pending", warn: "warn", fail: "down" }) + "</span>" +
+        "</div>";
+    }
+
+    // A stopped container is only shown (amber) unless it is monitored: then
+    // it counts as down. The server decides (idle() in main.go) and marks the
+    // shown-only ones warn, like badge() reads it. The number of monitored
+    // containers comes last.
+    function containerSummary(containers) {
+      if (containers.length === 0) return '<span class="dim">no containers</span>';
+      const n = { ok: 0, wait: 0, stopped: 0, warn: 0, fail: 0 };
+      let monitored = 0;
+      for (const c of containers) {
+        const p = c.probe || {};
+        if (c.monitored) monitored++;
+        if (p.pending) n.wait++;
+        else if (p.ok) n.ok++;
+        else if (p.stopped && p.warn) n.stopped++;
+        else if (p.warn) n.warn++;
+        else n.fail++;
+      }
+      return countSummary(containers.length, "container", n,
+          { ok: "up", wait: "pending", stopped: "warn", warn: "warn", fail: "down" }) +
+        (monitored ? ' · <span class="dim">' + monitored + " monitored</span>" : "");
+    }
+
+    // Alert mute (mute / mute_until in the config), shown under the name of
+    // a muted check; "all alerts muted" is one line in the STATUS box instead.
+    // names: the check's names that mute matches; sub: indented like the
+    // other lines of a container.
+    let mute = { all: false, names: [], until: "" };
+    function muteTag(names, sub = false) {
+      if (mute.all || !names.some(n => n && mute.names.includes(n))) return "";
+      return "<div class='url" + (sub ? " sub" : "") + " warn'>muted" + (mute.until ? " until " + escapeHtml(mute.until) : "") + "</div>";
+    }
+
+    // Monitored containers (must run, alert) come first and have a
+    // [MONITORED] tag next to their badge; the others keep their order (by
+    // name) below them.
+    function byMonitored(containers) {
+      return containers.filter(c => c.monitored).concat(containers.filter(c => !c.monitored));
+    }
+
+    function hostRow(item) {
+      return "<tr>" +
+          "<td><div class='name'>" + escapeHtml(item.name) + "</div>" +
+            "<div class='url'>" + escapeHtml(item.host) + "</div>" +
+            (item.url ? "<div class='url'>" + escapeHtml(item.url) + "</div>" : "") +
+            muteTag([item.name]) +
+          "</td>" +
+          "<td>" + probeCell(item.ping || {}, { graph: true }) + "</td>" +
+          "<td>" + probeCell(item.http || {}, { graph: true }) + "</td>" +
+        "</tr>";
+    }
+
+    // PING over all hosts, HTTP over the hosts with a url.
+    function renderHosts() {
+      renderGroup(rows, lastHosts, "#hosts", "all hosts", [
+        groupCell(lastHosts.map(h => h.ping || {}), "host"),
+        groupCell(lastHosts.map(h => h.http || {}), "URL"),
+      ], hostRow);
+    }
+
+    function dnsRow(d) {
+      return "<tr>" +
+          "<td><div class='name'>" + escapeHtml(d.name) + "</div>" +
+            "<div class='url'>" + escapeHtml(d.server) + "</div>" +
+            "<div class='url'>? " + escapeHtml(d.query) + "</div>" +
+            muteTag([d.name]) +
+          "</td>" +
+          "<td>" + probeCell(d.probe || {}, { graph: true }) + "</td>" +
+        "</tr>";
+    }
+
+    // FAIL when any server does not answer, WARN for an error answer such as
+    // REFUSED.
+    function renderDns() {
+      renderGroup(dnsRows, lastServers, "#dns", "all DNS servers", [
+        groupCell(lastServers.map(d => d.probe || {}), "server"),
+      ], dnsRow);
+    }
+
+    // CN and SANs of the certificate that is served: one SAN is shown
+    // directly (not when it only repeats the CN), two or more behind an
+    // inline toggle ("[+] 3 SANs").
+    function certNames(c) {
+      const sans = c.sans || [];
+      let html = c.subject ? "<div class='url'>CN " + escapeHtml(c.subject) + "</div>" : "";
+      if (sans.length === 1 && sans[0] !== c.subject) {
+        html += "<div class='url'>SAN " + escapeHtml(sans[0]) + "</div>";
+      } else if (sans.length > 1) {
+        const key = "san|" + c.name + "|" + c.host + "|" + c.address;
+        const open = openGroups.has(key);
+        html += "<div class='url inline-toggle" + (open ? " open" : "") + "' tabindex='0' role='button' aria-expanded='" + open +
+          "' data-key=\"" + escapeHtml(key) + "\">" + sans.length + " SANs</div>" +
+          (open ? sans.map(s => "<div class='url sub'>" + escapeHtml(s) + "</div>").join("") : "");
+      }
+      return html;
+    }
+
+    function certRow(c) {
+      // The address (e.g. the origin behind Cloudflare) is only in a tooltip,
+      // to keep the column short; the host line is left out when the name is
+      // the host anyway (no name in the config).
+      const tip = " title=\"connects to " + escapeHtml(c.address) + "\"";
+      const sameName = c.name === c.host;
+      return "<tr>" +
+          "<td><div class='name'" + (sameName ? tip : "") + ">" + escapeHtml(c.name) + "</div>" +
+            (sameName ? "" : "<div class='url'" + tip + ">" + escapeHtml(c.host) + "</div>") +
+            certNames(c) +
+            muteTag([c.name]) +
+          "</td>" +
+          "<td>" + probeCell(c.probe || {}, {
+            third: c.expires ? "expires " + c.expires : "",
+          }) + "</td>" +
+        "</tr>";
+    }
+
+    function renderCerts() {
+      renderGroup(certRows, lastCerts, "#certs", "all certificates", [
+        groupCell(lastCerts.map(c => c.probe || {}), "certificate"),
+      ], certRow);
+    }
+
+    function renderDocker() {
+      dockerRows.innerHTML = lastDocker.map(d => {
+        const key = daemonKey(d);
+        const open = openGroups.has(key);
+        const containers = d.containers || [];
+        return groupRow(key, open,
+            "<td><div class='name toggle" + (open ? " open" : "") + "'>" + escapeHtml(d.name) + "</div>" +
+              // The daemon's host from /info (the endpoint is only the socket
+              // proxy in Docker); the endpoint is in the tooltip.
+              "<div class='url' title=\"" + escapeHtml(d.endpoint) + "\">" + escapeHtml(d.host || d.endpoint) + "</div>" +
+              (d.info ? "<div class='url'>" + escapeHtml(d.info) + "</div>" : "") +
+              (d.warnings || []).map(w => "<div class='url warn'>! " + escapeHtml(w) + "</div>").join("") +
+              muteTag([d.name]) +
+            "</td>" +
+            "<td>" + probeCell(d.probe || {}, { nowrap: true, thirdHtml: containerSummary(containers) }) + "</td>") +
+          (open ? byMonitored(containers) : []).map(c =>
+            "<tr>" +
+              "<td><div class='name sub'>" + escapeHtml(c.name) + "</div>" +
+                (c.container && c.container !== c.name ? "<div class='url sub'>" + escapeHtml(c.container) + "</div>" : "") +
+                (c.image ? "<div class='url sub'>" + escapeHtml(c.image) + "</div>" : "") +
+                muteTag([c.name, c.container, c.service], true) +
+              "</td>" +
+              "<td>" + probeCell(c.probe || {}, {
+                tagHtml: c.monitored ? "<span class='tag' title='must run: alerts when stopped or gone'>[MONITORED]</span>" : "",
+                third: [c.uptime, c.container ? c.restartCount + " restarts" : ""].filter(Boolean).join(" · "),
+              }) + "</td>" +
+            "</tr>"
+          ).join("");
+      }).join("");
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    // No refresh while the tab is hidden; one at once when it is shown again.
+    refresh();
+    setInterval(() => { if (!document.hidden) refresh(); }, 2000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+  </script>
+{{template "bottom"}}

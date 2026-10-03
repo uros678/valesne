@@ -1,0 +1,23 @@
+{{define "top"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="bar top">
+    <span>▓▒░ VALESNE ░▒▓</span>
+    <nav>
+      <a href="/"{{if eq .Page "status"}} class="active"{{end}}>[ STATUS ]</a>
+      <a href="/help"{{if eq .Page "help"}} class="active"{{end}}>[ HELP ]</a>
+    </nav>
+    <span></span><!-- empty right column keeps the menu centred -->
+  </div>
+{{end}}
+
+{{define "bottom"}}
+</body>
+</html>
+{{end}}
