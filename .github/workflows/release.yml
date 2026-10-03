@@ -1,8 +1,10 @@
 # Release: on a pushed tag v*, vet and test on Linux (amd64, arm64) and
-# Windows, then build the static Linux binaries (amd64, arm64) and push the
-# Docker image for both to ghcr.io/uros678/valesne, so users install with
-# docker compose and compile nothing. Image tags for v0.4.1: 0.4.1, 0.4 and latest; a pre-release tag
-# like v0.4.1-rc1 gets only 0.4.1-rc1.
+# Windows, then build the static binaries (Linux amd64 and arm64, Windows
+# amd64), push the Docker image for Linux to ghcr.io/uros678/valesne and
+# create a GitHub Release with the binaries, SHA256SUMS and the tag message
+# as notes. Users install with docker compose or a binary and compile
+# nothing. Image tags for v0.5.1: 0.5.1, 0.5 and latest; a pre-release tag
+# like v0.5.1-rc1 gets only 0.5.1-rc1 and a GitHub pre-release.
 name: Release
 
 on:
@@ -27,27 +29,29 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
-  image:
+  release:
     needs: test
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      # The Dockerfile copies these binaries (no Go inside Docker, so no
+      # The Dockerfile copies the Linux binaries (no Go inside Docker, so no
       # emulation for arm64). The version is the tag, set explicitly so it
       # does not depend on the checkout.
       - run: |
-          for arch in amd64 arm64; do
-            GOARCH=$arch go build -trimpath -ldflags "-X main.version=${GITHUB_REF_NAME}" -o valesne-linux-$arch .
+          for target in linux/amd64 linux/arm64 windows/amd64; do
+            os=${target%/*} arch=${target#*/} ext=
+            [ "$os" = windows ] && ext=.exe
+            GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-X main.version=${GITHUB_REF_NAME}" -o "valesne-$os-$arch$ext" .
           done
+          sha256sum valesne-linux-amd64 valesne-linux-arm64 valesne-windows-amd64.exe > SHA256SUMS
         env:
           CGO_ENABLED: '0'
-          GOOS: linux
       - uses: docker/metadata-action@v6
         id: meta
         with:
@@ -71,3 +75,19 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+      # After the image, so a release on GitHub always has its image. The
+      # notes are the tag message (checkout may leave the tag lightweight,
+      # so fetch the annotated tag first) plus the image name.
+      - run: |
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          {
+            git tag -l --format='%(contents)' "$GITHUB_REF_NAME"
+            echo
+            echo "Docker image: \`ghcr.io/$GITHUB_REPOSITORY:${GITHUB_REF_NAME#v}\` (linux/amd64, linux/arm64)."
+          } > notes.md
+          pre=
+          case "$GITHUB_REF_NAME" in *-*) pre=--prerelease ;; esac
+          gh release create "$GITHUB_REF_NAME" --verify-tag $pre --title "$GITHUB_REF_NAME" --notes-file notes.md \
+            valesne-linux-amd64 valesne-linux-arm64 valesne-windows-amd64.exe SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
