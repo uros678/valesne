@@ -37,13 +37,18 @@ fail.
 
 ## Quick start
 
+With Docker, using the released image (nothing to compile):
+
 ```sh
-go build -o valesne .
-./valesne -config config.toml
+mkdir valesne && cd valesne
+curl -O https://raw.githubusercontent.com/uros678/valesne/master/docker-compose.yml
+mkdir config
+docker compose up -d
 ```
 
-On first start a commented default `config.toml` is written. Edit it and open
-http://localhost:9090. The HELP page explains every setting with an
+Open http://localhost:9090. On first start a commented default
+`config/config.toml` is written; edit it and the changes are picked up within
+a few seconds, no restart needed. The HELP page explains every setting with an
 example; the configuration itself is only edited in the file.
 
 ```toml
@@ -56,28 +61,40 @@ certs       = [ { name = "My site", host = "example.com" } ]
 ntfy_url    = "https://ntfy.sh/<long random topic>"
 ```
 
+Test the alerts with
+`docker compose exec valesne /valesne -test-alert -config /config/config.toml`.
+Update with `docker compose pull && docker compose up -d`.
+
+## Docker
+
+The image (`ghcr.io/uros678/valesne`, linux/amd64) is small
+(`distroless/static`) and runs as a normal user. Tags: `latest`, a version
+(`0.4.1`) and a minor version (`0.4`, gets the fixes of that line).
+
+Optional settings go in a `.env` file next to `docker-compose.yml`: `PORT`
+(host port, default 9090), `UID` / `GID` (the user the app runs as, default
+1000; it must be able to write `./config`, so set them to your own `id -u` /
+`id -g` if those are not 1000) and `TZ` (time zone, default UTC).
+
+The Docker check (`docker_check = true` in the config) goes through a
+read-only socket proxy (`tecnativa/docker-socket-proxy`) that the compose file
+starts as well, so valesne never sees the Docker socket itself. In the
+container, `localhost` is the container: check the Docker host by its LAN IP.
+
+## Without Docker
+
+Runs on Linux and Windows; build with Go:
+
+```sh
+go build -o valesne .
+./valesne -config config.toml
+```
+
 Other flags: `-version`, `-test-alert` (sends a test notification) and
 `-healthcheck` (used by the Docker image).
 
 On Linux, ping needs `net.ipv4.ping_group_range` to include the user (or
 root / `CAP_NET_RAW`); Docker sets this up inside containers.
-
-## Docker
-
-`Dockerfile` and `docker-compose.yml` build a small image
-(`distroless/static`) from a static Linux binary:
-
-```sh
-CGO_ENABLED=0 GOOS=linux go build -o valesne-linux .
-docker compose up -d --build
-```
-
-The config lives in `./config/`. Optional settings go in a `.env` file next to
-`docker-compose.yml`: `PORT` (host port, default 9090), `UID` / `GID` (the user
-the app runs as, default 1000; it must be able to write `./config`) and `TZ`
-(time zone, default UTC). The Docker check goes through a read-only socket
-proxy (`tecnativa/docker-socket-proxy`), so valesne never sees the Docker
-socket itself.
 
 ## Security
 
@@ -90,7 +107,7 @@ random topic or an access token (`ntfy_token`).
 
 ## Build and test
 
-Runs on Linux and Windows. Dependencies: `golang.org/x/net`, `golang.org/x/sys`
+Dependencies: `golang.org/x/net`, `golang.org/x/sys`
 and `github.com/BurntSushi/toml`.
 
 ```sh
