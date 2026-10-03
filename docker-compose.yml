@@ -1,6 +1,10 @@
-# valesne with docker compose. Build the binary first (see Dockerfile), then
-# "docker compose up -d --build". Optional settings in a .env file next to
-# this one:
+# valesne with docker compose, using the released image (nothing to build):
+#
+#   mkdir config        # before the first start, see UID below
+#   docker compose up -d
+#
+# Update: "docker compose pull && docker compose up -d". Optional settings in
+# a .env file next to this one:
 #
 #   PORT  host port for the web page (default 9090); listen_port in the config
 #         must stay 9090, it is the port inside the container
@@ -12,8 +16,9 @@ name: valesne
 
 services:
   valesne:
-    build: .
-    image: valesne:latest
+    # "latest" is the newest release; pin a version (e.g. 0.4) to update
+    # only when you choose.
+    image: ghcr.io/uros678/valesne:latest
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
     environment:

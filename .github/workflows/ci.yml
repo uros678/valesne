@@ -2,10 +2,12 @@
 # Windows (the two supported systems; some failures show on one only).
 # It builds and releases nothing. Commits that change only notes, docs or
 # the personal files do not start it; a newer push cancels the older run.
+# Tags are left to release.yml, which runs the same checks first.
 name: CI
 
 on:
   push:
+    branches: ['**']
     paths-ignore: ['**.md', 'docs/**', 'LICENSE']
   pull_request:
     paths-ignore: ['**.md', 'docs/**', 'LICENSE']

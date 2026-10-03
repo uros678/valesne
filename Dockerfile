@@ -1,7 +1,9 @@
 # Minimal image for valesne. It does not compile anything: it copies a static
-# Linux binary built beforehand, so no Go is needed inside Docker:
+# Linux binary built beforehand, so no Go is needed inside Docker. Released
+# images are built by .github/workflows/release.yml; by hand:
 #
 #   CGO_ENABLED=0 GOOS=linux go build -o valesne-linux .
+#   docker build -t valesne .
 #
 # distroless/static instead of scratch: it has CA certificates (for the HTTPS
 # checks), tzdata and a non-root user (uid 65532, overridden in compose).
