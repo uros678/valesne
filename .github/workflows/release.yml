@@ -1,7 +1,7 @@
-# Release: on a pushed tag v*, vet and test on Linux and Windows, then build
-# the static Linux binaries (amd64, arm64) and push the Docker image for both
-# to ghcr.io/uros678/valesne, so users install with docker compose and compile
-# nothing. Image tags for v0.4.1: 0.4.1, 0.4 and latest; a pre-release tag
+# Release: on a pushed tag v*, vet and test on Linux (amd64, arm64) and
+# Windows, then build the static Linux binaries (amd64, arm64) and push the
+# Docker image for both to ghcr.io/uros678/valesne, so users install with
+# docker compose and compile nothing. Image tags for v0.4.1: 0.4.1, 0.4 and latest; a pre-release tag
 # like v0.4.1-rc1 gets only 0.4.1-rc1.
 name: Release
 
@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
