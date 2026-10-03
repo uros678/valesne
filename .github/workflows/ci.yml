@@ -1,5 +1,6 @@
 # CI check: vet and test on every push and pull request, on Linux and
-# Windows (the two supported systems; some failures show on one only).
+# Windows (the two supported systems; some failures show on one only), and
+# on Linux arm64 (real ARM hardware, for the arm64 image).
 # It builds and releases nothing. Commits that change only notes, docs or
 # the personal files do not start it; a newer push cancels the older run.
 # Tags are left to release.yml, which runs the same checks first.
@@ -24,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5

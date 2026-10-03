@@ -46,6 +46,10 @@ mkdir config
 docker compose up -d
 ```
 
+`mkdir config` matters: otherwise Docker creates the folder as root and the
+app, which runs as user 1000 (not root), cannot write its config there. If
+your user is not 1000 (`id -u`), see `UID` / `GID` below.
+
 Open http://localhost:9090. On first start a commented default
 `config/config.toml` is written; edit it and the changes are picked up within
 a few seconds, no restart needed. The HELP page explains every setting with an
@@ -67,9 +71,10 @@ Update with `docker compose pull && docker compose up -d`.
 
 ## Docker
 
-The image (`ghcr.io/uros678/valesne`, linux/amd64) is small
-(`distroless/static`) and runs as a normal user. Tags: `latest`, a version
-(`0.4.1`) and a minor version (`0.4`, gets the fixes of that line).
+The image (`ghcr.io/uros678/valesne`, linux/amd64 and linux/arm64, e.g. a
+Raspberry Pi with a 64-bit OS) is small (`distroless/static`) and runs as a
+normal user. Tags: `latest`, a version (`0.4.1`) and a minor version (`0.4`,
+gets the fixes of that line).
 
 Optional settings go in a `.env` file next to `docker-compose.yml`: `PORT`
 (host port, default 9090), `UID` / `GID` (the user the app runs as, default
