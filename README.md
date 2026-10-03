@@ -88,11 +88,14 @@ container, `localhost` is the container: check the Docker host by its LAN IP.
 
 ## Without Docker
 
-Runs on Linux and Windows; build with Go:
+Runs on Linux and Windows as a single file. Download it from
+[Releases](https://github.com/uros678/valesne/releases/latest)
+(`valesne-linux-amd64`, `valesne-linux-arm64`, `valesne-windows-amd64.exe`;
+checksums in `SHA256SUMS`), or build it with Go (`go build -o valesne .`):
 
 ```sh
-go build -o valesne .
-./valesne -config config.toml
+chmod +x valesne-linux-amd64
+./valesne-linux-amd64 -config config.toml
 ```
 
 Other flags: `-version`, `-test-alert` (sends a test notification) and
